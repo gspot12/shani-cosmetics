@@ -12,6 +12,10 @@ export default defineConfig({
     url: process.env["DATABASE_URL"] || "file:./dev.db",
     adapter: () => {
       const url = process.env["DATABASE_URL"] || "file:./dev.db";
+      const authToken = process.env["TURSO_AUTH_TOKEN"];
+      if (authToken) {
+        return new PrismaLibSql({ url, authToken });
+      }
       const libsqlUrl = url.startsWith("file:") ? url : `file:${url}`;
       return new PrismaLibSql({ url: libsqlUrl });
     },
