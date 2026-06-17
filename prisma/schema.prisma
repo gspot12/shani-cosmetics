@@ -1,0 +1,293 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  role         String   @default("ADMIN")
+  name         String
+  phone        String?
+  email        String   @unique
+  passwordHash String?
+  imageUrl     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  staff         Staff?
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+model Customer {
+  id               String    @id @default(cuid())
+  fullName         String
+  phone            String    @unique
+  email            String?
+  birthDate        DateTime?
+  notes            String?
+  isBlocked        Boolean   @default(false)
+  marketingConsent Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  appointments    Appointment[]
+  waitlistEntries WaitlistEntry[]
+  reviews         Review[]
+}
+
+model Staff {
+  id                    String   @id @default(cuid())
+  userId                String?  @unique
+  name                  String
+  phone                 String?
+  email                 String?
+  bio                   String?
+  imageUrl              String?
+  color                 String   @default("#E8B4B8")
+  isActive              Boolean  @default(true)
+  maxAppointmentsPerDay Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user               User?               @relation(fields: [userId], references: [id])
+  staffServices      StaffService[]
+  workingHours       WorkingHour[]
+  availabilityBlocks AvailabilityBlock[]
+  appointments       Appointment[]
+  bookingHolds       BookingHold[]
+  waitlistEntries    WaitlistEntry[]
+}
+
+model ServiceCategory {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  services Service[]
+}
+
+model Service {
+  id                  String  @id @default(cuid())
+  categoryId          String
+  name                String
+  description         String?
+  durationMinutes     Int
+  bufferBeforeMinutes Int     @default(0)
+  bufferAfterMinutes  Int     @default(10)
+  price               Float
+  depositAmount       Float?
+  requiresDeposit     Boolean @default(false)
+  requiresApproval    Boolean @default(false)
+  imageUrl            String?
+  isActive            Boolean @default(true)
+  sortOrder           Int     @default(0)
+
+  category            ServiceCategory      @relation(fields: [categoryId], references: [id])
+  staffServices       StaffService[]
+  appointmentServices AppointmentService[]
+  waitlistEntries     WaitlistEntry[]
+}
+
+model StaffService {
+  staffId   String
+  serviceId String
+
+  staff   Staff   @relation(fields: [staffId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id])
+
+  @@id([staffId, serviceId])
+}
+
+model BusinessSettings {
+  id                      String  @id @default(cuid())
+  businessName            String  @default("שני קוסמטיקס")
+  address                 String?
+  phone                   String?
+  whatsapp                String?
+  instagram               String?
+  wazeUrl                 String?
+  googleMapsUrl           String?
+  cancellationPolicy      String?
+  minBookingNoticeMinutes Int     @default(180)
+  allowClientCancel       Boolean @default(true)
+  allowClientReschedule   Boolean @default(true)
+  cancelLimitHours        Int     @default(24)
+  rescheduleLimitHours    Int     @default(24)
+  defaultBufferMinutes    Int     @default(10)
+  adminNotifyPhone        String?
+  adminNotifyEmail        String?
+  logoUrl                 String?
+  coverUrl                String?
+  footerText              String?
+}
+
+model WorkingHour {
+  id        String  @id @default(cuid())
+  staffId   String?
+  dayOfWeek Int
+  startTime String
+  endTime   String
+  isActive  Boolean @default(true)
+
+  staff Staff? @relation(fields: [staffId], references: [id])
+}
+
+model AvailabilityBlock {
+  id            String   @id @default(cuid())
+  staffId       String?
+  startDateTime DateTime
+  endDateTime   DateTime
+  reason        String?
+  isFullDay     Boolean  @default(false)
+  createdById   String?
+
+  staff Staff? @relation(fields: [staffId], references: [id])
+}
+
+model Appointment {
+  id                   String    @id @default(cuid())
+  customerId           String
+  staffId              String
+  status               String    @default("CONFIRMED")
+  startDateTime        DateTime
+  endDateTime          DateTime
+  totalDurationMinutes Int
+  totalPrice           Float
+  paymentStatus        String    @default("UNPAID")
+  clientManageToken    String    @unique @default(cuid())
+  internalNotes        String?
+  clientNotes          String?
+  createdById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  cancelledAt          DateTime?
+  cancellationReason   String?
+
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  staff               Staff                @relation(fields: [staffId], references: [id])
+  appointmentServices AppointmentService[]
+  notifications       Notification[]
+  messageLogs         MessageLog[]
+  reviews             Review[]
+}
+
+model AppointmentService {
+  id                  String @id @default(cuid())
+  appointmentId       String
+  serviceId           String
+  serviceNameSnapshot String
+  priceSnapshot       Float
+  durationSnapshot    Int
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id])
+}
+
+model BookingHold {
+  id            String   @id @default(cuid())
+  staffId       String
+  customerPhone String?
+  startDateTime DateTime
+  endDateTime   DateTime
+  expiresAt     DateTime
+  token         String   @unique @default(cuid())
+
+  staff Staff @relation(fields: [staffId], references: [id])
+}
+
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  channel    String    @default("SMS")
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+}
+
+model Notification {
+  id            String   @id @default(cuid())
+  type          String
+  title         String
+  body          String
+  isRead        Boolean  @default(false)
+  userId        String?
+  appointmentId String?
+  createdAt     DateTime @default(now())
+
+  user        User?        @relation(fields: [userId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+}
+
+model MessageTemplate {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  title    String
+  body     String
+  channel  String  @default("WHATSAPP")
+  isActive Boolean @default(true)
+}
+
+model MessageLog {
+  id            String   @id @default(cuid())
+  toPhone       String?
+  toEmail       String?
+  channel       String
+  templateKey   String?
+  body          String
+  status        String   @default("SENT")
+  error         String?
+  appointmentId String?
+  createdAt     DateTime @default(now())
+
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+}
+
+model WaitlistEntry {
+  id            String    @id @default(cuid())
+  customerId    String
+  serviceId     String
+  staffId       String?
+  preferredFrom DateTime?
+  preferredTo   DateTime?
+  status        String    @default("WAITING")
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  service  Service  @relation(fields: [serviceId], references: [id])
+  staff    Staff?   @relation(fields: [staffId], references: [id])
+}
+
+model Review {
+  id            String   @id @default(cuid())
+  customerId    String
+  appointmentId String
+  rating        Int
+  text          String?
+  isPublished   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+}
