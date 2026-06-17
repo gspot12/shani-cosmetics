@@ -3,9 +3,13 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { hashSync } from 'bcryptjs'
 
-const url = process.env.DATABASE_URL || 'file:./dev.db'
-const libsqlUrl = url.startsWith('file:') ? url : `file:${url}`
-const adapter = new PrismaLibSql({ url: libsqlUrl })
+const tursoUrl = process.env.TURSO_DATABASE_URL
+const authToken = process.env.TURSO_AUTH_TOKEN
+const localUrl = process.env.DATABASE_URL || 'file:./dev.db'
+const libsqlUrl = localUrl.startsWith('file:') ? localUrl : `file:${localUrl}`
+const adapter = tursoUrl && authToken
+  ? new PrismaLibSql({ url: tursoUrl, authToken })
+  : new PrismaLibSql({ url: libsqlUrl })
 const prisma = new PrismaClient({ adapter } as any)
 
 async function main() {
