@@ -8,6 +8,8 @@ import {
   sendAppointmentCancellation,
   sendAppointmentUpdate,
 } from '@/lib/notifications'
+import { getMessagingProvider, isDevMessagingMode } from '@/lib/messaging/provider'
+import { normalizeIsraeliPhone, formatDate, formatTime } from '@/lib/utils'
 import type {
   ServiceWithCategory,
   StaffWithServices,
@@ -886,4 +888,47 @@ export async function getAuditLog(params: { page?: number }): Promise<{
   ])
 
   return { logs, total }
+}
+
+// ---------------------------------------------------------------------------
+// 30. sendTestWhatsApp
+// ---------------------------------------------------------------------------
+
+export async function sendTestWhatsApp(params: {
+  phone: string
+  type: 'otp' | 'confirmation' | 'admin'
+}): Promise<{ success: boolean; error?: string; note?: string }> {
+  const { type } = params
+
+  let phone: string
+  try {
+    phone = normalizeIsraeliPhone(params.phone)
+  } catch {
+    return { success: false, error: 'מספר הטלפון לא תקין' }
+  }
+
+  const provider = getMessagingProvider()
+  const devMode = isDevMessagingMode()
+  const note = devMode ? 'מצב פיתוח: ההודעה הוצגה בקונסול בלבד' : undefined
+  const now = new Date()
+
+  try {
+    if (type === 'otp') {
+      if (provider.startVerification) {
+        await provider.startVerification(phone)
+      } else {
+        await provider.sendOtp(phone, '123456')
+      }
+    } else if (type === 'confirmation') {
+      const body = `היי שרה לוי,\nהתור שלך ב"שני קוסמטיקס" נקבע בהצלחה 💛\n\nשירות: טיפול פנים\nמטפלת: שני\nתאריך: ${formatDate(now)}\nשעה: ${formatTime(now)}\nמשך טיפול: 60 דקות\n\nהודעת בדיקה — שני קוסמטיקס`
+      await provider.sendWhatsApp(phone, body)
+    } else {
+      const body = `נקבע תור חדש ב"שני קוסמטיקס" ✅\n\nלקוחה: שרה לוי\nטלפון: ${phone}\nשירות: טיפול פנים\nמטפלת: שני\nתאריך: ${formatDate(now)}\nשעה: ${formatTime(now)}\nמחיר: ₪200\n\n[הודעת בדיקה]`
+      await provider.sendWhatsApp(phone, body)
+    }
+    return { success: true, note }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    return { success: false, error, note }
+  }
 }

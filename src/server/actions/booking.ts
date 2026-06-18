@@ -17,7 +17,7 @@ import {
 } from '@/lib/notifications'
 import { getMessagingProvider } from '@/lib/messaging/provider'
 import { renderTemplate, TEMPLATE_KEYS } from '@/lib/messaging/templates'
-import { formatDate, formatTime, formatCurrency } from '@/lib/utils'
+import { formatDate, formatTime, formatCurrency, normalizeIsraeliPhone } from '@/lib/utils'
 import type {
   ServiceWithCategory,
   AvailableSlot,
@@ -182,54 +182,62 @@ export async function releaseBookingHold(token: string): Promise<void> {
 export async function startOtp(params: {
   phone: string
 }): Promise<{ exists: boolean }> {
-  const { phone } = params
+  let phone: string
+  try {
+    phone = normalizeIsraeliPhone(params.phone)
+  } catch {
+    throw new Error('מספר הטלפון לא תקין')
+  }
 
   // Rate limit: max 5 OTPs per phone per hour
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
   const recentCount = await prisma.otpCode.count({
-    where: {
-      phone,
-      createdAt: { gte: oneHourAgo },
-    },
+    where: { phone, createdAt: { gte: oneHourAgo } },
   })
-
   if (recentCount >= 5) {
     throw new Error('יותר מדי ניסיונות. נסי שוב בעוד שעה.')
   }
 
-  const code = generateOtpCode()
-  const codeHash = hashOtp(code)
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-
-  await prisma.otpCode.create({
-    data: {
-      phone,
-      codeHash,
-      expiresAt,
-      channel: 'SMS',
-    },
-  })
-
-  // Send via messaging provider
   const provider = getMessagingProvider()
-  const settings = await prisma.businessSettings.findFirst()
-  const businessName = settings?.businessName ?? 'שני קוסמטיקס'
 
-  const body = renderTemplate(
-    TEMPLATE_KEYS.OTP,
-    { businessName, code, expiresMinutes: '10' }
-  )
-
-  try {
-    await provider.sendOtp(phone, code)
-  } catch (err) {
-    console.error('[startOtp] Failed to send OTP', err)
-    // Log the fallback message attempt
-    await provider.sendSms(phone, body).catch(() => {})
+  if (provider.startVerification) {
+    // Twilio Verify flow — no local code; Twilio sends the OTP via WhatsApp
+    try {
+      await provider.startVerification(phone)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[startOtp] Twilio Verify start failed:', msg)
+      throw new Error('לא הצלחנו לשלוח קוד אימות כרגע. נסי שוב בעוד רגע.')
+    }
+    // Store a placeholder OtpCode for rate-limiting purposes only
+    await prisma.otpCode.create({
+      data: {
+        phone,
+        codeHash: 'TWILIO_VERIFY',
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        channel: 'WHATSAPP',
+      },
+    })
+  } else {
+    // Dev / fallback flow — generate local code and log it
+    const code = generateOtpCode()
+    const codeHash = hashOtp(code)
+    await prisma.otpCode.create({
+      data: {
+        phone,
+        codeHash,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        channel: 'SMS',
+      },
+    })
+    try {
+      await provider.sendOtp(phone, code)
+    } catch (err) {
+      console.error('[startOtp] Failed to send OTP', err instanceof Error ? err.message : err)
+    }
   }
 
   const exists = (await prisma.customer.count({ where: { phone } })) > 0
-
   return { exists }
 }
 
@@ -241,36 +249,41 @@ export async function verifyOtp(params: {
   phone: string
   code: string
 }): Promise<{ valid: boolean; sessionToken?: string }> {
-  const { phone, code } = params
-
-  const otp = await prisma.otpCode.findFirst({
-    where: {
-      phone,
-      consumedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-    orderBy: { createdAt: 'desc' },
-  })
-
-  if (!otp) {
+  let phone: string
+  try {
+    phone = normalizeIsraeliPhone(params.phone)
+  } catch {
     return { valid: false }
   }
+  const { code } = params
+
+  // Find the most recent unconsumed OtpCode (used for rate limiting in all modes)
+  const otp = await prisma.otpCode.findFirst({
+    where: { phone, consumedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!otp) return { valid: false }
 
   // Increment attempt count
   await prisma.otpCode.update({
     where: { id: otp.id },
     data: { attempts: { increment: 1 } },
   })
+  if (otp.attempts >= 5) return { valid: false }
 
-  if (otp.attempts >= 5) {
-    return { valid: false }
+  const provider = getMessagingProvider()
+
+  let isValid: boolean
+
+  if (provider.checkVerification) {
+    // Twilio Verify flow — check with Twilio
+    isValid = await provider.checkVerification(phone, code)
+  } else {
+    // Dev / fallback flow — compare hash
+    isValid = verifyOtpCode(code, otp.codeHash)
   }
 
-  const isValid = verifyOtpCode(code, otp.codeHash)
-
-  if (!isValid) {
-    return { valid: false }
-  }
+  if (!isValid) return { valid: false }
 
   // Mark as consumed
   await prisma.otpCode.update({
@@ -278,12 +291,7 @@ export async function verifyOtp(params: {
     data: { consumedAt: new Date() },
   })
 
-  // Create JWT session token
-  const sessionToken = await createSessionToken(
-    { phone, type: 'customer' },
-    '24h'
-  )
-
+  const sessionToken = await createSessionToken({ phone, type: 'customer' }, '24h')
   return { valid: true, sessionToken }
 }
 
@@ -315,6 +323,14 @@ export async function createAppointment(params: {
     sessionToken,
   } = params
 
+  // Normalize phone for consistent storage and session comparison
+  let normalizedPhone: string
+  try {
+    normalizedPhone = normalizeIsraeliPhone(customerData.phone)
+  } catch {
+    throw new Error('מספר הטלפון לא תקין')
+  }
+
   // Verify session token
   let sessionPayload: Record<string, unknown>
   try {
@@ -325,7 +341,7 @@ export async function createAppointment(params: {
 
   if (
     sessionPayload.type !== 'customer' ||
-    sessionPayload.phone !== customerData.phone
+    sessionPayload.phone !== normalizedPhone
   ) {
     throw new Error('אין הרשאה.')
   }
@@ -395,11 +411,11 @@ export async function createAppointment(params: {
       throw new Error('התור כבר תפוס. נא לבחור שעה אחרת.')
     }
 
-    // Create or find customer
+    // Create or find customer (use normalized phone for consistent lookups)
     const customer = await tx.customer.upsert({
-      where: { phone: customerData.phone },
+      where: { phone: normalizedPhone },
       create: {
-        phone: customerData.phone,
+        phone: normalizedPhone,
         fullName: customerData.fullName,
         email: customerData.email,
         marketingConsent: customerData.marketingConsent ?? false,

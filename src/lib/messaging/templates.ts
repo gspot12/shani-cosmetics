@@ -1,9 +1,6 @@
 /**
  * Interpolate a template string by replacing {{varName}} placeholders
  * with the corresponding values from the vars object.
- *
- * Example:
- *   interpolateTemplate("שלום {{name}}!", { name: "שני" }) => "שלום שני!"
  */
 export function interpolateTemplate(
   template: string,
@@ -15,101 +12,97 @@ export function interpolateTemplate(
 }
 
 // ---------------------------------------------------------------------------
-// Message template constants (Hebrew)
+// Hebrew message templates (verbatim per business requirements)
 // ---------------------------------------------------------------------------
 
-/** OTP verification code */
-export const TEMPLATE_OTP = `קוד האימות שלך ל{{businessName}}: {{code}}
-הקוד תקף ל-{{expiresMinutes}} דקות.`
+export const TEMPLATE_OTP = `קוד האימות שלך לשני קוסמטיקס: {{code}}
+הקוד תקף ל-10 דקות.`
 
-/** Appointment confirmation sent to client */
-export const TEMPLATE_APPOINTMENT_CONFIRMATION = `שלום {{customerName}} 😊
-תורך אושר ב{{businessName}}!
+export const TEMPLATE_APPOINTMENT_CONFIRMATION = `היי {{customerName}},
+התור שלך ב"שני קוסמטיקס" נקבע בהצלחה 💛
 
-📅 תאריך: {{date}}
-⏰ שעה: {{time}}
-💆 שירות: {{services}}
-👩 מטפלת: {{staffName}}
-💰 מחיר: {{price}}
+שירות: {{serviceName}}
+מטפלת: {{staffName}}
+תאריך: {{date}}
+שעה: {{time}}
+משך טיפול: {{duration}} דקות
+כתובת: {{address}}
+
+לשינוי או ביטול התור:
+{{manageLink}}
+
+נשמח לראותך,
+שני קוסמטיקס`
+
+export const TEMPLATE_APPOINTMENT_REMINDER = `היי {{customerName}},
+תזכורת לתור שלך ב"שני קוסמטיקס" 💛
+
+שירות: {{serviceName}}
+תאריך: {{date}}
+שעה: {{time}}
+כתובת: {{address}}
 
 לניהול התור:
-{{manageUrl}}
+{{manageLink}}`
 
-נתראה! 💖`
+export const TEMPLATE_APPOINTMENT_CANCELLATION = `היי {{customerName}},
+התור שלך ב"שני קוסמטיקס" בוטל.
 
-/** Appointment reminder (sent ~24h before) */
-export const TEMPLATE_APPOINTMENT_REMINDER = `שלום {{customerName}} 👋
-תזכורת: יש לך תור מחר ב{{businessName}}!
-
-📅 {{date}} בשעה {{time}}
-💆 {{services}}
-👩 {{staffName}}
-
-לניהול / ביטול התור:
-{{manageUrl}}`
-
-/** Appointment cancellation (sent to client) */
-export const TEMPLATE_APPOINTMENT_CANCELLATION = `שלום {{customerName}},
-התור שלך ל{{date}} בשעה {{time}} בוטל.
-
-{{cancellationReason}}
+שירות: {{serviceName}}
+תאריך: {{date}}
+שעה: {{time}}
 
 לקביעת תור חדש:
-{{bookingUrl}}
+{{bookingLink}}`
 
-{{businessName}}`
+export const TEMPLATE_APPOINTMENT_RESCHEDULE = `היי {{customerName}},
+התור שלך ב"שני קוסמטיקס" עודכן 💛
 
-/** Appointment reschedule (sent to client) */
-export const TEMPLATE_APPOINTMENT_RESCHEDULE = `שלום {{customerName}} 😊
-התור שלך שונה ב{{businessName}}.
-
-📅 תאריך חדש: {{date}}
-⏰ שעה חדשה: {{time}}
-💆 שירות: {{services}}
-👩 {{staffName}}
+שירות: {{serviceName}}
+מטפלת: {{staffName}}
+תאריך חדש: {{date}}
+שעה חדשה: {{time}}
 
 לניהול התור:
-{{manageUrl}}`
+{{manageLink}}`
 
-/** Admin notification — new appointment */
-export const TEMPLATE_ADMIN_NEW_APPOINTMENT = `תור חדש נקבע! 🎉
+export const TEMPLATE_ADMIN_NEW_APPOINTMENT = `נקבע תור חדש ב"שני קוסמטיקס" ✅
 
 לקוחה: {{customerName}}
 טלפון: {{customerPhone}}
-שירות: {{services}}
-תאריך: {{date}} בשעה {{time}}
+שירות: {{serviceName}}
 מטפלת: {{staffName}}
+תאריך: {{date}}
+שעה: {{time}}
 מחיר: {{price}}`
 
-/** Admin notification — appointment cancelled by client */
-export const TEMPLATE_ADMIN_CANCELLATION = `ביטול תור 🔴
+export const TEMPLATE_ADMIN_CANCELLATION = `בוטל תור ב"שני קוסמטיקס" 🔴
 
 לקוחה: {{customerName}}
 טלפון: {{customerPhone}}
-שירות: {{services}}
-תאריך: {{date}} בשעה {{time}}
-סיבה: {{cancellationReason}}`
+שירות: {{serviceName}}
+תאריך: {{date}}
+שעה: {{time}}`
 
-/** Waitlist notification — slot opened */
-export const TEMPLATE_WAITLIST_SLOT_AVAILABLE = `שלום {{customerName}} 🌟
-יש פתח בתור ב{{businessName}}!
+export const TEMPLATE_WAITLIST_SLOT_AVAILABLE = `היי {{customerName}} 🌟
+יש פתח בתור ב"שני קוסמטיקס"!
 
-📅 {{date}} בשעה {{time}}
-💆 {{services}}
+שירות: {{serviceName}}
+תאריך: {{date}}
+שעה: {{time}}
 
 לחצי מהר לקביעת התור:
-{{bookingUrl}}
+{{bookingLink}}
 
 ההצעה תקפה ל-{{expiresMinutes}} דקות בלבד.`
 
-/** Review request — sent after appointment completion */
-export const TEMPLATE_REVIEW_REQUEST = `שלום {{customerName}} ✨
-תודה שביקרת ב{{businessName}}!
+export const TEMPLATE_REVIEW_REQUEST = `היי {{customerName}} ✨
+תודה שביקרת ב"שני קוסמטיקס"!
 
 נשמח מאוד אם תשאירי לנו חוות דעת קצרה:
 {{reviewUrl}}
 
-תודה רבה 💖`
+תודה רבה 💛`
 
 // ---------------------------------------------------------------------------
 // Template key registry
@@ -119,6 +112,8 @@ export const TEMPLATE_KEYS = {
   OTP: 'otp',
   APPOINTMENT_CONFIRMATION: 'appointment_confirmation',
   APPOINTMENT_REMINDER: 'appointment_reminder',
+  APPOINTMENT_REMINDER_24H: 'appointment_reminder_24h',
+  APPOINTMENT_REMINDER_3H: 'appointment_reminder_3h',
   APPOINTMENT_CANCELLATION: 'appointment_cancellation',
   APPOINTMENT_RESCHEDULE: 'appointment_reschedule',
   ADMIN_NEW_APPOINTMENT: 'admin_new_appointment',
@@ -129,11 +124,12 @@ export const TEMPLATE_KEYS = {
 
 export type TemplateKey = (typeof TEMPLATE_KEYS)[keyof typeof TEMPLATE_KEYS]
 
-/** Map of template keys to their default body strings */
 export const DEFAULT_TEMPLATES: Record<TemplateKey, string> = {
   [TEMPLATE_KEYS.OTP]: TEMPLATE_OTP,
   [TEMPLATE_KEYS.APPOINTMENT_CONFIRMATION]: TEMPLATE_APPOINTMENT_CONFIRMATION,
   [TEMPLATE_KEYS.APPOINTMENT_REMINDER]: TEMPLATE_APPOINTMENT_REMINDER,
+  [TEMPLATE_KEYS.APPOINTMENT_REMINDER_24H]: TEMPLATE_APPOINTMENT_REMINDER,
+  [TEMPLATE_KEYS.APPOINTMENT_REMINDER_3H]: TEMPLATE_APPOINTMENT_REMINDER,
   [TEMPLATE_KEYS.APPOINTMENT_CANCELLATION]: TEMPLATE_APPOINTMENT_CANCELLATION,
   [TEMPLATE_KEYS.APPOINTMENT_RESCHEDULE]: TEMPLATE_APPOINTMENT_RESCHEDULE,
   [TEMPLATE_KEYS.ADMIN_NEW_APPOINTMENT]: TEMPLATE_ADMIN_NEW_APPOINTMENT,
@@ -143,8 +139,8 @@ export const DEFAULT_TEMPLATES: Record<TemplateKey, string> = {
 }
 
 /**
- * Render a template by key using the provided variables.
- * Falls back to the default template if the key is not overridden in the DB.
+ * Render a template by key, substituting vars.
+ * Uses overrideBody (from DB) when provided; falls back to DEFAULT_TEMPLATES.
  */
 export function renderTemplate(
   key: TemplateKey,

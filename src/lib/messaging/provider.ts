@@ -1,155 +1,178 @@
+import { normalizeIsraeliPhone } from '@/lib/utils'
+
 export interface MessagingProvider {
   sendOtp(phone: string, code: string): Promise<void>
   sendWhatsApp(phone: string, body: string): Promise<void>
   sendSms(phone: string, body: string): Promise<void>
   sendEmail(email: string, subject: string, body: string): Promise<void>
+  // Optional: implemented by TwilioMessagingProvider for Twilio Verify flow
+  startVerification?: (phone: string) => Promise<void>
+  checkVerification?: (phone: string, code: string) => Promise<boolean>
 }
 
 /**
- * Development messaging provider — logs all messages to console instead of
- * making real API calls. Used when production credentials are not configured.
+ * Development messaging provider — logs all messages to console.
+ * Used when Twilio credentials are not configured (MESSAGING_DEV_MODE=true or missing creds).
  */
 export class DevMessagingProvider implements MessagingProvider {
   async sendOtp(phone: string, code: string): Promise<void> {
     console.log('[DEV OTP]', phone, code)
   }
-
   async sendWhatsApp(phone: string, body: string): Promise<void> {
     console.log('[DEV WhatsApp]', phone, body)
   }
-
   async sendSms(phone: string, body: string): Promise<void> {
     console.log('[DEV SMS]', phone, body)
   }
-
   async sendEmail(email: string, subject: string, body: string): Promise<void> {
     console.log('[DEV Email]', email, subject, body)
   }
 }
 
 /**
- * Twilio / WhatsApp Cloud API production provider.
- * Only instantiated when the required environment variables are present.
+ * Twilio WhatsApp production provider.
+ * Activated when MESSAGING_PROVIDER=twilio and MESSAGING_DEV_MODE!=true.
+ *
+ * Required env vars:
+ *   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM
+ *   TWILIO_VERIFY_SERVICE_SID  (for OTP via Twilio Verify)
  */
-export class ProductionMessagingProvider implements MessagingProvider {
-  private twilioAccountSid: string
-  private twilioAuthToken: string
-  private twilioFromPhone: string
-  private whatsappAccessToken: string
-  private whatsappPhoneNumberId: string
+export class TwilioMessagingProvider implements MessagingProvider {
+  private get accountSid() { return process.env.TWILIO_ACCOUNT_SID ?? '' }
+  private get verifyServiceSid() { return process.env.TWILIO_VERIFY_SERVICE_SID ?? '' }
 
-  constructor() {
-    this.twilioAccountSid = process.env.TWILIO_ACCOUNT_SID || ''
-    this.twilioAuthToken = process.env.TWILIO_AUTH_TOKEN || ''
-    this.twilioFromPhone = process.env.TWILIO_FROM_PHONE || ''
-    this.whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN || ''
-    this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || ''
+  private basicAuth(): string {
+    const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+    const tok = process.env.TWILIO_AUTH_TOKEN ?? ''
+    return 'Basic ' + Buffer.from(`${sid}:${tok}`).toString('base64')
   }
 
-  async sendOtp(phone: string, code: string): Promise<void> {
-    // Use Twilio Verify service when available
-    const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID
-    if (verifyServiceSid && this.twilioAccountSid && this.twilioAuthToken) {
-      const url = `https://verify.twilio.com/v2/Services/${verifyServiceSid}/Verifications`
-      const body = new URLSearchParams({ To: phone, Channel: 'sms' })
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization:
-            'Basic ' +
-            Buffer.from(
-              `${this.twilioAccountSid}:${this.twilioAuthToken}`
-            ).toString('base64'),
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: body.toString(),
-      })
-      if (!response.ok) {
-        const err = await response.text()
-        throw new Error(`Twilio Verify OTP failed: ${err}`)
-      }
+  private whatsappFrom(): string {
+    const from = process.env.TWILIO_WHATSAPP_FROM ?? ''
+    return from.startsWith('whatsapp:') ? from : `whatsapp:${from}`
+  }
+
+  private toWhatsapp(phone: string): string {
+    const normalized = normalizeIsraeliPhone(phone)
+    return `whatsapp:${normalized}`
+  }
+
+  /** Start Twilio Verify OTP via WhatsApp channel */
+  async startVerification(phone: string): Promise<void> {
+    const to = this.toWhatsapp(phone)
+    const url = `https://verify.twilio.com/v2/Services/${this.verifyServiceSid}/Verifications`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: this.basicAuth(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ To: to, Channel: 'whatsapp' }).toString(),
+    })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Twilio Verify start failed (${res.status}): ${err}`)
+    }
+  }
+
+  /** Check a Twilio Verify OTP; returns true if approved */
+  async checkVerification(phone: string, code: string): Promise<boolean> {
+    const to = this.toWhatsapp(phone)
+    const url = `https://verify.twilio.com/v2/Services/${this.verifyServiceSid}/VerificationCheck`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: this.basicAuth(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ To: to, Code: code }).toString(),
+    })
+    if (!res.ok) return false  // 404 = expired/consumed
+    const data = await res.json() as { status: string }
+    return data.status === 'approved'
+  }
+
+  /** Send a WhatsApp message via Twilio */
+  async sendWhatsApp(phone: string, body: string): Promise<void> {
+    let to: string
+    try {
+      to = this.toWhatsapp(phone)
+    } catch {
+      console.error('[TwilioWhatsApp] Invalid phone, skipping message to:', phone)
       return
     }
-    // Fallback: send OTP via plain SMS
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Messages.json`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: this.basicAuth(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ From: this.whatsappFrom(), To: to, Body: body }).toString(),
+    })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Twilio WhatsApp send failed (${res.status}): ${err}`)
+    }
+  }
+
+  /** Send an OTP code via SMS fallback (used when Verify is not configured) */
+  async sendOtp(phone: string, code: string): Promise<void> {
     await this.sendSms(phone, `קוד האימות שלך: ${code}`)
   }
 
-  async sendWhatsApp(phone: string, body: string): Promise<void> {
-    if (!this.whatsappAccessToken || !this.whatsappPhoneNumberId) {
-      console.warn('[WhatsApp] Missing credentials, falling back to console log')
-      console.log('[WhatsApp FALLBACK]', phone, body)
-      return
-    }
-    const url = `https://graph.facebook.com/v18.0/${this.whatsappPhoneNumberId}/messages`
-    const normalizedPhone = phone.startsWith('+') ? phone.slice(1) : phone
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.whatsappAccessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: normalizedPhone,
-        type: 'text',
-        text: { body },
-      }),
-    })
-    if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`WhatsApp send failed: ${err}`)
-    }
-  }
-
   async sendSms(phone: string, body: string): Promise<void> {
-    if (!this.twilioAccountSid || !this.twilioAuthToken || !this.twilioFromPhone) {
-      console.warn('[SMS] Missing Twilio credentials, falling back to console log')
-      console.log('[SMS FALLBACK]', phone, body)
+    let normalized: string
+    try {
+      normalized = normalizeIsraeliPhone(phone)
+    } catch {
+      console.error('[TwilioSMS] Invalid phone, skipping:', phone)
       return
     }
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${this.twilioAccountSid}/Messages.json`
-    const params = new URLSearchParams({
-      From: this.twilioFromPhone,
-      To: phone,
-      Body: body,
-    })
-    const response = await fetch(url, {
+    const fromPhone = process.env.TWILIO_FROM_PHONE ?? ''
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/Messages.json`
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization:
-          'Basic ' +
-          Buffer.from(
-            `${this.twilioAccountSid}:${this.twilioAuthToken}`
-          ).toString('base64'),
+        Authorization: this.basicAuth(),
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: params.toString(),
+      body: new URLSearchParams({ From: fromPhone, To: normalized, Body: body }).toString(),
     })
-    if (!response.ok) {
-      const err = await response.text()
-      throw new Error(`Twilio SMS send failed: ${err}`)
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Twilio SMS send failed (${res.status}): ${err}`)
     }
   }
 
   async sendEmail(email: string, subject: string, body: string): Promise<void> {
-    // Placeholder — integrate with SendGrid / Resend / Nodemailer as needed
     console.log('[Email STUB]', email, subject, body)
   }
 }
 
 /**
- * Return the appropriate messaging provider based on environment configuration.
- * Falls back to DevMessagingProvider when production credentials are absent.
+ * Return the appropriate messaging provider based on environment.
+ * Returns TwilioMessagingProvider when MESSAGING_PROVIDER=twilio and creds present.
+ * Falls back to DevMessagingProvider.
  */
 export function getMessagingProvider(): MessagingProvider {
-  const hasWhatsApp =
-    !!process.env.WHATSAPP_ACCESS_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID
-  const hasTwilio =
-    !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN
-
-  if (hasWhatsApp || hasTwilio) {
-    return new ProductionMessagingProvider()
+  if (
+    process.env.MESSAGING_PROVIDER === 'twilio' &&
+    process.env.MESSAGING_DEV_MODE !== 'true' &&
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN
+  ) {
+    return new TwilioMessagingProvider()
   }
-
   return new DevMessagingProvider()
+}
+
+/** Returns true when running in dev/console-log mode */
+export function isDevMessagingMode(): boolean {
+  return !(
+    process.env.MESSAGING_PROVIDER === 'twilio' &&
+    process.env.MESSAGING_DEV_MODE !== 'true' &&
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN
+  )
 }

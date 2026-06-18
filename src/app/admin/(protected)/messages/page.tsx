@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { listMessageTemplates, updateMessageTemplate } from "@/server/actions/admin";
+import { listMessageTemplates, updateMessageTemplate, sendTestWhatsApp } from "@/server/actions/admin";
 import type { MessageTemplate } from "@prisma/client";
 
 const TEMPLATE_LABELS: Record<string, string> = {
@@ -46,6 +46,8 @@ function renderPreview(body: string): string {
   return body.replace(/\{\{[^}]+\}\}/g, (match) => replacements[match] ?? match);
 }
 
+type TestType = "otp" | "confirmation" | "admin";
+
 export default function MessagesPage() {
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +57,12 @@ export default function MessagesPage() {
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+
+  // WhatsApp test panel state
+  const [testPhone, setTestPhone] = useState("");
+  const [testType, setTestType] = useState<TestType>("confirmation");
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; error?: string; note?: string } | null>(null);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToast({ msg, type });
@@ -112,6 +120,21 @@ export default function MessagesPage() {
     }
   }
 
+  async function handleSendTest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!testPhone) return;
+    setTestSending(true);
+    setTestResult(null);
+    try {
+      const result = await sendTestWhatsApp({ phone: testPhone, type: testType });
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ success: false, error: err instanceof Error ? err.message : "שגיאה לא צפויה" });
+    } finally {
+      setTestSending(false);
+    }
+  }
+
   function getLabel(key: string): string {
     return TEMPLATE_LABELS[key] ?? key;
   }
@@ -141,6 +164,61 @@ export default function MessagesPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">תבניות הודעות</h1>
         <p className="text-sm text-gray-500 mt-0.5">עריכת הודעות אוטומטיות ללקוחות</p>
+      </div>
+
+      {/* WhatsApp Test Panel */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-gray-50">
+          <h2 className="text-sm font-semibold text-gray-800">שלח הודעת WhatsApp לבדיקה</h2>
+          <p className="text-xs text-gray-400 mt-0.5">שליחת הודעה ישירה לטלפון — לאימות שהחיבור לטוויליו תקין</p>
+        </div>
+        <form onSubmit={handleSendTest} className="p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">מספר טלפון</label>
+              <input
+                type="tel"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                placeholder="050-741-1234"
+                dir="ltr"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:border-[#B8973A]"
+              />
+            </div>
+            <div className="sm:w-56">
+              <label className="block text-xs text-gray-500 mb-1">סוג הודעה</label>
+              <select
+                value={testType}
+                onChange={(e) => setTestType(e.target.value as TestType)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:border-[#B8973A]"
+              >
+                <option value="otp">OTP — קוד אימות</option>
+                <option value="confirmation">אישור תור — דוגמה</option>
+                <option value="admin">הודעה למנהל — דוגמה</option>
+              </select>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={testSending || !testPhone}
+            className="px-5 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-40 transition-colors"
+          >
+            {testSending ? "שולח..." : "שלח הודעת בדיקה"}
+          </button>
+
+          {testResult && (
+            <div className={`rounded-lg px-4 py-3 text-sm ${testResult.success ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+              {testResult.success ? (
+                <p className="font-medium">✅ הודעה נשלחה בהצלחה</p>
+              ) : (
+                <p className="font-medium">❌ שגיאה בשליחה</p>
+              )}
+              {testResult.error && <p className="mt-1 text-xs font-mono break-all">{testResult.error}</p>}
+              {testResult.note && <p className="mt-1 text-xs text-gray-500">{testResult.note}</p>}
+            </div>
+          )}
+        </form>
       </div>
 
       {/* Variables hint */}

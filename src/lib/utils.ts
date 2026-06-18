@@ -112,3 +112,25 @@ export function rangesOverlap(
 ): boolean {
   return start1 < end2 && end1 > start2
 }
+
+/**
+ * Normalize an Israeli phone number to E.164 format: +972XXXXXXXXX
+ *
+ * Accepts:
+ *   0507411494      → +972507411494
+ *   972507411494    → +972507411494
+ *   +972507411494   → +972507411494
+ *   05 074 114 94   → +972507411494
+ *   050-741-1494    → +972507411494
+ *
+ * Throws "מספר הטלפון לא תקין" for anything that doesn't match.
+ */
+export function normalizeIsraeliPhone(raw: string): string {
+  const cleaned = raw.replace(/[^\d+]/g, '')
+
+  if (/^\+972\d{8,9}$/.test(cleaned)) return cleaned
+  if (/^972\d{8,9}$/.test(cleaned))   return '+' + cleaned
+  if (/^0\d{8,9}$/.test(cleaned))     return '+972' + cleaned.slice(1)
+
+  throw new Error('מספר הטלפון לא תקין')
+}

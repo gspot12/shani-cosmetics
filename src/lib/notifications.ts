@@ -1,15 +1,12 @@
 import { prisma } from './db'
 import { getMessagingProvider } from './messaging/provider'
-import {
-  renderTemplate,
-  TEMPLATE_KEYS,
-} from './messaging/templates'
+import { renderTemplate, TEMPLATE_KEYS } from './messaging/templates'
 import { formatDate, formatTime, formatCurrency } from './utils'
 
 const BASE_URL = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
 
 // ---------------------------------------------------------------------------
-// Helper: log a message to the MessageLog table
+// Helpers
 // ---------------------------------------------------------------------------
 
 async function logMessage(params: {
@@ -40,62 +37,44 @@ async function logMessage(params: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: fetch a DB template body override if one exists
-// ---------------------------------------------------------------------------
-
 async function getTemplateBody(key: string): Promise<string | undefined> {
   const tpl = await prisma.messageTemplate.findUnique({ where: { key } })
   return tpl?.isActive ? tpl.body : undefined
 }
 
-// ---------------------------------------------------------------------------
-// Helper: fetch business name for templates
-// ---------------------------------------------------------------------------
-
-async function getBusinessName(): Promise<string> {
-  const settings = await prisma.businessSettings.findFirst()
-  return settings?.businessName ?? 'שני קוסמטיקס'
+async function getSettings() {
+  return prisma.businessSettings.findFirst()
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Send an appointment confirmation message to the customer via WhatsApp / SMS.
- */
-export async function sendAppointmentConfirmation(
-  appointmentId: string
-): Promise<void> {
+export async function sendAppointmentConfirmation(appointmentId: string): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
-      customer: true,
-      staff: true,
-      appointmentServices: true,
-    },
+    include: { customer: true, staff: true, appointmentServices: true },
   })
   if (!appointment) return
 
-  const businessName = await getBusinessName()
-  const serviceNames = appointment.appointmentServices
+  const settings = await getSettings()
+  const serviceName = appointment.appointmentServices
     .map((s) => s.serviceNameSnapshot)
     .join(', ')
-  const manageUrl = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
+  const manageLink = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
   const overrideBody = await getTemplateBody(TEMPLATE_KEYS.APPOINTMENT_CONFIRMATION)
 
   const body = renderTemplate(
     TEMPLATE_KEYS.APPOINTMENT_CONFIRMATION,
     {
       customerName: appointment.customer.fullName,
-      businessName,
+      serviceName,
+      staffName: appointment.staff.name,
       date: formatDate(appointment.startDateTime),
       time: formatTime(appointment.startDateTime),
-      services: serviceNames,
-      staffName: appointment.staff.name,
-      price: formatCurrency(appointment.totalPrice),
-      manageUrl,
+      duration: String(appointment.totalDurationMinutes),
+      address: settings?.address ?? '',
+      manageLink,
     },
     overrideBody
   )
@@ -109,7 +88,7 @@ export async function sendAppointmentConfirmation(
   } catch (err) {
     status = 'FAILED'
     error = err instanceof Error ? err.message : String(err)
-    console.error('[notifications] sendAppointmentConfirmation failed', err)
+    console.error('[notifications] sendAppointmentConfirmation failed:', error)
   }
 
   await logMessage({
@@ -123,39 +102,28 @@ export async function sendAppointmentConfirmation(
   })
 }
 
-/**
- * Send an appointment update / reschedule message to the customer.
- */
-export async function sendAppointmentUpdate(
-  appointmentId: string
-): Promise<void> {
+export async function sendAppointmentUpdate(appointmentId: string): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
-      customer: true,
-      staff: true,
-      appointmentServices: true,
-    },
+    include: { customer: true, staff: true, appointmentServices: true },
   })
   if (!appointment) return
 
-  const businessName = await getBusinessName()
-  const serviceNames = appointment.appointmentServices
+  const serviceName = appointment.appointmentServices
     .map((s) => s.serviceNameSnapshot)
     .join(', ')
-  const manageUrl = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
+  const manageLink = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
   const overrideBody = await getTemplateBody(TEMPLATE_KEYS.APPOINTMENT_RESCHEDULE)
 
   const body = renderTemplate(
     TEMPLATE_KEYS.APPOINTMENT_RESCHEDULE,
     {
       customerName: appointment.customer.fullName,
-      businessName,
+      serviceName,
+      staffName: appointment.staff.name,
       date: formatDate(appointment.startDateTime),
       time: formatTime(appointment.startDateTime),
-      services: serviceNames,
-      staffName: appointment.staff.name,
-      manageUrl,
+      manageLink,
     },
     overrideBody
   )
@@ -169,7 +137,7 @@ export async function sendAppointmentUpdate(
   } catch (err) {
     status = 'FAILED'
     error = err instanceof Error ? err.message : String(err)
-    console.error('[notifications] sendAppointmentUpdate failed', err)
+    console.error('[notifications] sendAppointmentUpdate failed:', error)
   }
 
   await logMessage({
@@ -183,35 +151,30 @@ export async function sendAppointmentUpdate(
   })
 }
 
-/**
- * Send an appointment cancellation message to the customer.
- */
 export async function sendAppointmentCancellation(
   appointmentId: string,
-  cancellationReason?: string
+  _cancellationReason?: string
 ): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
-      customer: true,
-      staff: true,
-    },
+    include: { customer: true, appointmentServices: true },
   })
   if (!appointment) return
 
-  const businessName = await getBusinessName()
-  const bookingUrl = `${BASE_URL}/book`
+  const serviceName = appointment.appointmentServices
+    .map((s) => s.serviceNameSnapshot)
+    .join(', ')
+  const bookingLink = `${BASE_URL}/book`
   const overrideBody = await getTemplateBody(TEMPLATE_KEYS.APPOINTMENT_CANCELLATION)
 
   const body = renderTemplate(
     TEMPLATE_KEYS.APPOINTMENT_CANCELLATION,
     {
       customerName: appointment.customer.fullName,
-      businessName,
+      serviceName,
       date: formatDate(appointment.startDateTime),
       time: formatTime(appointment.startDateTime),
-      cancellationReason: cancellationReason ?? appointment.cancellationReason ?? '',
-      bookingUrl,
+      bookingLink,
     },
     overrideBody
   )
@@ -225,7 +188,7 @@ export async function sendAppointmentCancellation(
   } catch (err) {
     status = 'FAILED'
     error = err instanceof Error ? err.message : String(err)
-    console.error('[notifications] sendAppointmentCancellation failed', err)
+    console.error('[notifications] sendAppointmentCancellation failed:', error)
   }
 
   await logMessage({
@@ -239,38 +202,27 @@ export async function sendAppointmentCancellation(
   })
 }
 
-/**
- * Send a notification to the admin about a new or cancelled appointment.
- */
 export async function sendAdminNotification(
   appointmentId: string,
   type: 'new' | 'cancelled'
 ): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
-      customer: true,
-      staff: true,
-      appointmentServices: true,
-    },
+    include: { customer: true, staff: true, appointmentServices: true },
   })
   if (!appointment) return
 
-  const settings = await prisma.businessSettings.findFirst()
-  const adminPhone = settings?.adminNotifyPhone
+  const settings = await getSettings()
+  const adminPhone = settings?.adminNotifyPhone ?? process.env.ADMIN_NOTIFY_PHONE
   const adminEmail = settings?.adminNotifyEmail
-  const businessName = settings?.businessName ?? 'שני קוסמטיקס'
-
   if (!adminPhone && !adminEmail) return
 
-  const serviceNames = appointment.appointmentServices
+  const serviceName = appointment.appointmentServices
     .map((s) => s.serviceNameSnapshot)
     .join(', ')
 
   const templateKey =
-    type === 'new'
-      ? TEMPLATE_KEYS.ADMIN_NEW_APPOINTMENT
-      : TEMPLATE_KEYS.ADMIN_CANCELLATION
+    type === 'new' ? TEMPLATE_KEYS.ADMIN_NEW_APPOINTMENT : TEMPLATE_KEYS.ADMIN_CANCELLATION
 
   const overrideBody = await getTemplateBody(templateKey)
 
@@ -279,13 +231,11 @@ export async function sendAdminNotification(
     {
       customerName: appointment.customer.fullName,
       customerPhone: appointment.customer.phone,
-      services: serviceNames,
+      serviceName,
+      staffName: appointment.staff.name,
       date: formatDate(appointment.startDateTime),
       time: formatTime(appointment.startDateTime),
-      staffName: appointment.staff.name,
       price: formatCurrency(appointment.totalPrice),
-      cancellationReason: appointment.cancellationReason ?? '',
-      businessName,
     },
     overrideBody
   )
@@ -300,17 +250,9 @@ export async function sendAdminNotification(
     } catch (err) {
       status = 'FAILED'
       error = err instanceof Error ? err.message : String(err)
-      console.error('[notifications] sendAdminNotification WhatsApp failed', err)
+      console.error('[notifications] sendAdminNotification WhatsApp failed:', error)
     }
-    await logMessage({
-      toPhone: adminPhone,
-      channel: 'WHATSAPP',
-      templateKey,
-      body,
-      appointmentId,
-      status,
-      error,
-    })
+    await logMessage({ toPhone: adminPhone, channel: 'WHATSAPP', templateKey, body, appointmentId, status, error })
   }
 
   if (adminEmail) {
@@ -325,53 +267,40 @@ export async function sendAdminNotification(
     } catch (err) {
       status = 'FAILED'
       error = err instanceof Error ? err.message : String(err)
-      console.error('[notifications] sendAdminNotification Email failed', err)
+      console.error('[notifications] sendAdminNotification Email failed:', error)
     }
-    await logMessage({
-      toEmail: adminEmail,
-      channel: 'EMAIL',
-      templateKey,
-      body,
-      appointmentId,
-      status,
-      error,
-    })
+    await logMessage({ toEmail: adminEmail, channel: 'EMAIL', templateKey, body, appointmentId, status, error })
   }
 }
 
-/**
- * Send an appointment reminder to the customer (typically called by a cron job).
- */
 export async function sendAppointmentReminder(
-  appointmentId: string
+  appointmentId: string,
+  templateKey:
+    | typeof TEMPLATE_KEYS.APPOINTMENT_REMINDER_24H
+    | typeof TEMPLATE_KEYS.APPOINTMENT_REMINDER_3H = TEMPLATE_KEYS.APPOINTMENT_REMINDER_24H
 ): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
-      customer: true,
-      staff: true,
-      appointmentServices: true,
-    },
+    include: { customer: true, staff: true, appointmentServices: true },
   })
   if (!appointment) return
 
-  const businessName = await getBusinessName()
-  const serviceNames = appointment.appointmentServices
+  const settings = await getSettings()
+  const serviceName = appointment.appointmentServices
     .map((s) => s.serviceNameSnapshot)
     .join(', ')
-  const manageUrl = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
-  const overrideBody = await getTemplateBody(TEMPLATE_KEYS.APPOINTMENT_REMINDER)
+  const manageLink = `${BASE_URL}/my-appointment/${appointment.clientManageToken}`
+  const overrideBody = await getTemplateBody(templateKey)
 
   const body = renderTemplate(
-    TEMPLATE_KEYS.APPOINTMENT_REMINDER,
+    templateKey,
     {
       customerName: appointment.customer.fullName,
-      businessName,
+      serviceName,
       date: formatDate(appointment.startDateTime),
       time: formatTime(appointment.startDateTime),
-      services: serviceNames,
-      staffName: appointment.staff.name,
-      manageUrl,
+      address: settings?.address ?? '',
+      manageLink,
     },
     overrideBody
   )
@@ -385,13 +314,13 @@ export async function sendAppointmentReminder(
   } catch (err) {
     status = 'FAILED'
     error = err instanceof Error ? err.message : String(err)
-    console.error('[notifications] sendAppointmentReminder failed', err)
+    console.error('[notifications] sendAppointmentReminder failed:', error)
   }
 
   await logMessage({
     toPhone: appointment.customer.phone,
     channel: 'WHATSAPP',
-    templateKey: TEMPLATE_KEYS.APPOINTMENT_REMINDER,
+    templateKey,
     body,
     appointmentId,
     status,
